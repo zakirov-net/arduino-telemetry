@@ -1,0 +1,5 @@
+*
+!build/ingest-linux
+!build/web-linux
+!cmd/ingest/Dockerfile
+!cmd/web/Dockerfile

@@ -1,0 +1,22 @@
+# Зависимости
+node_modules/
+
+# Сборка Vite (у вас outDir — ../cmd/web/static, но на всякий случай)
+dist/
+.vite/
+
+# Локальные env-файлы (если заведёте VITE_* переменные)
+.env
+.env.local
+.env.*.local
+
+# Логи
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Кэш и мусор IDE/OS
+.DS_Store
+Thumbs.db
+*.tsbuildinfo

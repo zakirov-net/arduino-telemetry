@@ -1,0 +1,20 @@
+# Go build output
+/build/*
+!/build/.gitkeep
+
+# Env-файлы с секретами
+.env
+poller.env
+*.local.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker volumes (если будете использовать bind-mount)
+data/
+
+# Артефакты сборки фронтенда, которые попадают в cmd/web/static/
+cmd/web/static/*
+!cmd/web/static/index.html
