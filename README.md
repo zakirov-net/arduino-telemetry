@@ -17,49 +17,53 @@
 ### Схема взаимодействия
 
 ```
-┌──────────────┐   USB Serial   ┌──────────────┐
-│   Arduino    │◄──────────────►│    poller    │   (запускается на хосте,
-│  LM35 на A0  │  GET, LED:ON   │  (Go, хост)  │    рядом с Arduino)
-│  LED  на D7  │  JSON-ответ    └──────┬───────┘
-└──────────────┘                       │ MQTT publish
-                                       │   home/arduino/<dev>/data
-                                       │   home/arduino/<dev>/status
-                                       ▼
-                               ┌───────────────┐
-                               │   Mosquitto   │   (Docker, порт 1883,
-                               │  (MQTT-брокер)│    логин/пароль)
-                               └───┬───────┬───┘
-                    subscribe      │       │      publish
-              /+/data              │       │   /+/command
-                                   ▼       ▲
-                          ┌────────────┐   │   ┌──────────────┐
-                          │   ingest   │   │   │     web      │
-                          │ (Go, Docker)│  │   │ (Go, Docker) │
-                          └─────┬──────┘   │   └──────┬───────┘
-                                │ INSERT   │          │ SELECT
-                                ▼          │          ▼
-                          ┌────────────────────────────────┐
-                          │          PostgreSQL            │   (Docker, порт 5432,
-                          │  devices(id, name, location)   │    named volume)
-                          │  readings(device_id, temp, ts) │
-                          └────────────────────────────────┘
-                                                ▲
-                                                │ HTTP /api/*
-                                                │
-                                       ┌────────┴────────┐
-                                       │    Браузер      │
-                                       │ (React + Vite)  │
-                                       │  встроен в web  │
-                                       └─────────────────┘
+┌──────────┐         ┌──────────┐            ┌──────────────┐           ┌───────────────┐
+│ Браузер  │──HTTP──►│ web (Go) │───SELECT──►│  PostgreSQL  │◄──INSERT──│  ingest (Go)  │
+└──────────┘         └────┬─────┘            └──────────────┘           └──────┬────────┘
+                          │  PUBLISH home/arduino/<dev>/command (QoS 1)        ▲
+                          │  SUBSCRIBE home/arduino/+/data                     │
+                          ▼                                                    │
+          ┌───────────────┴────────────────────────────────────────────────────┴──────────┐
+          │ Mosquitto — MQTT-брокер (Docker, :1883, логин/пароль)                         │
+          │     home/arduino/<dev>/data      poller → ingest   (телеметрия, QoS 0)        │
+          │     home/arduino/<dev>/command   web → poller      (команды, QoS 1)           │
+          │     home/arduino/<dev>/status    publish, retain + LWT                        │
+          └───────────┬───────────────────────────────────────────┬───────────────────────┘
+                      ▲  PUBLISH data / status                    │ SUBSCRIBE command
+                      │                                           │
+                      │                                           ▼
+          ┌───────────┴───────────────────────────────────────────┴───────────────────────┐
+          │ poller (Go, хост: build\poller.exe)                                           │
+          │   опрос serial "GET" каждые POLL_INTERVAL (5 с) → MQTT .../data               │
+          │   команды MQTT .../command → serial (LED:ON / LED:OFF)                        │
+          └───────────────────────────────────────┬───────────────────────────────────────┘
+                                                  │ USB Serial 9600 8N1, строки '\n', JSON
+                                                  ▼
+          ┌───────────────────────────────────────┴───────────────────────────────────────┐
+          │ Arduino Nano / Uno: LM35 → A0 (температура), LED → D7 (управление)            │
+          │ GET / PING / LED:ON / LED:OFF → JSON-ответ                                    │
+          └───────────────────────────────────────────────────────────────────────────────┘
 ```
+
+Браузер **не** обращается ни к PostgreSQL, ни к Mosquitto: его единственный собеседник — `web` по HTTP (порт 8080).
+
+| Эндпоинт `web` | Что делает |
+|---|---|
+| `GET /` | отдаёт собранный React из `embed.FS` (SPA-fallback на `index.html`) |
+| `GET /api/devices` | `SELECT` из `devices` — список для выпадающего списка |
+| `GET /api/readings?device_id&from&to&bucket` | `SELECT` из `readings` с агрегацией `date_bin`; браузер опрашивает раз в 10 с |
+| `POST /api/command` | публикует `home/arduino/<dev>/command` в MQTT — команда уходит в `poller` и дальше в Arduino |
+
+В PostgreSQL пишет только `ingest` (`INSERT`), читает только `web` (`SELECT`). Обмен телеметрией и командами идёт через MQTT, поэтому `web` не знает, на каком COM-порту и на каком хосте запущен `poller`.
 
 ### Потоки данных
 
 | Направление | Путь | Формат |
 |---|---|---|
-| **Телеметрия** | Arduino → poller → MQTT → ingest → Postgres → web → браузер | `{"device_id":1,"temperature":23.50,"recorded_at":"..."}` |
-| **Управление** | браузер → web (`POST /api/command`) → MQTT → poller → Arduino | `{"device_name":"arduino-01","command":"LED:ON"}` |
-| **Статус** | poller → MQTT `.../status` (retain + LWT) | `online` / `offline` |
+| **Телеметрия** | Arduino → poller → Mosquitto → ingest → PostgreSQL → web → браузер | `{"device_id":1,"temperature":23.50,"recorded_at":"..."}` |
+| **Чтение графика** | браузер → web (`GET /api/devices`, `GET /api/readings`) → PostgreSQL | `[{"recorded_at":"...","temperature":23.40}]` (среднее по бакету `date_bin`) |
+| **Управление** | браузер → web (`POST /api/command`) → Mosquitto → poller → Arduino | `{"device_name":"arduino-01","command":"LED:ON"}` |
+| **Статус** | poller → Mosquitto `.../status` (retain + LWT) | `online` / `offline` |
 
 ### Ключевые решения
 
