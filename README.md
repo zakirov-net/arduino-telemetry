@@ -229,6 +229,8 @@ published {"device_id":1,"temperature":23.50,"recorded_at":"..."}
 
 Через 5 секунд (`POLL_INTERVAL`) — следующая строка. В браузере на графике появятся точки, а переключатель LED в UI начнёт включать/выключать диод.
 
+`poller` сам переоткрывает COM-порт: если Arduino отключить от USB и подключить обратно, связь восстанавливается без перезапуска `poller.exe`. Пока порта нет, в логе раз в минуту будет `serial COM5 unavailable: ... (available ports: ...)`, а после появления устройства — `serial COM5 connected`.
+
 ## Разработка
 
 ### Остановка и запуск
@@ -346,7 +348,13 @@ docker compose up -d
 | Порт правильный | Диспетчер устройств → «Порты (COM и LPT)» → цифра после `COM` (по умолчанию `COM5`) |
 | Прошит актуальный скетч | Serial Monitor (**9600**, NL) → `GET` → должен прийти JSON |
 | `poller.env` подхватился | В логах строка `loaded config from poller.env`; запускать из `build\` |
-| Таймаут мал для CH340-клона | В `internal/serial/client.go`: `SetReadTimeout(500 * time.Millisecond)` + пересобрать |
+| Таймаут мал для CH340-клона | Увеличить `SERIAL_READ_TIMEOUT` (например, `5s`) в `poller.env` и перезапустить poller |
+
+### `poller.exe`: `GET: Access is denied`
+
+Появляется, если Arduino выдернули/переподключили по USB (Windows убивает дескриптор порта). `poller` с версии с авто-переподключением сам закрывает «мёртвый» порт и открывает заново (пауза 3 с, ожидание загрузчика 2 с), перезапуск не нужен. Достаточно дождаться в логах `serial COM5 connected`.
+
+Если в логе долго висит `serial COM5 unavailable: ... (available ports: COM6)`, значит система выдала устройству другой номер порта — поправьте `SERIAL_PORT` в `poller.env` и перезапустите poller.
 
 ### `poller.exe`: `open serial COM5: Access denied`
 
